@@ -1,0 +1,444 @@
+---
+title: "Monads in R"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Monads in R}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+'Monad' is a term often best avoided in conversation, and is often described in 
+overly mathematical terms, the "meme" definition being the category theory verion 
+which states
+
+> "a monad is just a monoid in the category of endofunctors"
+
+which is mostly true, but also unnecessary.
+
+[This blog post](https://www.adit.io/posts/2013-04-17-functors,_applicatives,_and_monads_in_pictures.html)
+does a great job of walking through the more practical definition, and it has 
+"translations" into several programming languages including [JavaScript](https://medium.com/@tzehsiang/javascript-functor-applicative-monads-in-pictures-b567c6415221#.rdwll124i) and [Python](https://github.com/dbrattli/OSlash/wiki/Functors,-Applicatives,-And-Monads-In-Pictures).
+
+Basically, `map` applies some function to some values. `flatMap` does the same, 
+but first "reaches inside" a context to extract some inner values, and after 
+applying the function, re-wraps the result in the original context.
+
+The enlightening example for me is a `List` - if we have some values and want to 
+apply some function to them, we can do that with, e.g.
+
+```{r}
+f <- function(x) x^2
+Map(f, c(2, 4, 6))
+```
+
+and if we have a 'flat' list, this still works
+
+```{r}
+Map(f, list(2, 4, 6))
+```
+
+but what if we have an 'outer context' list?
+
+```{r}
+Map(f, list(c(2, 3), c(4, 5, 6)))
+```
+
+In this case, because `f` is vectorised, `Map` sends each vector to `f` and gets 
+a result for each list. What if we have a list in the inner context?
+
+```{r, error = TRUE}
+Map(f, list(list(2, 3), list(4, 5, 6)))
+```
+
+This fails because `f(list(2, 3))` fails (it doesn't know how to deal with an 
+argument which is a list).
+
+Instead, we can use a version of 'map' that first reaches inside the outer 
+`list` context, concatenates what's inside, applies the function, then re-wraps 
+the result in a new, flat list
+
+```{r}
+fmap <- function(x, f) {
+  list(f(unlist(x)))
+}
+fmap(list(list(2, 3), list(4, 5, 6)), f)
+```
+
+This is the essence of a monad - something that supports such a `fmap` 
+operation that performs the mapping inside the context. There are various 
+patterns which benefit from such a context, and this vignette describes an 
+implementation of several of these via the {monads} package.
+
+The `fmap` operation is so common that it's typical to find it presented as an 
+infix function, similar to how pipes work in R
+
+```{r}
+list(list(2, 3), list(4, 5, 6)) |> fmap(f)
+```
+
+and we can go one step further by defining a new pipe which is just a different 
+syntax for this
+
+```
+x |> fmap(f)
+
+x %>>=% f
+```
+
+This infix function borrows from Haskell's `>>=` (pronounced "bind") which is 
+so fundamental that forms part of the language's logo
+
+<center>
+<img src="haskell_logo.png" width="400px">
+</center>
+
+```{r setup}
+library(monads)
+```
+
+Additionally, some toy helper functions are defined in this package for 
+demonstrating application of functions
+
+```{r}
+timestwo(4)
+square(5)
+add_n(3, 4)
+```
+
+## List
+
+As per the example above, the `List` monad wraps values (which may be additional
+`list`s) and when `flatMap`ed the results are 'flattened' into a single `List`.
+
+```{r}
+# identical to a regular Map
+x <- listM(1, 2, 3) %>>=%
+  timestwo()
+x
+
+# only possible with the flatMap approach
+y <- listM(list(1, 2), list(3, 4, 5)) %>>=% 
+  timestwo()
+y
+```
+
+Note that while `x` and `y` print as regular lists, they remain `List` monads; 
+a `print` method is defined which essentially extracts `value(x)`.
+
+## Logger
+
+A context could include a stored 'log' of the expressions used on each 
+application. One example would be performing data transformation in a {dplyr}
+pipeline (which would usually use `%>%` or more recently `|>`).
+
+All that is required is to wrap the value at the start of the pipeline in a 
+`Logger` context, which is achieved by calling the `new()` method of `Logger`
+
+```{r}
+library(dplyr, warn.conflicts = FALSE)
+
+result <- loggerM(mtcars) %>>=%
+  filter(mpg > 10) %>>=%
+  select(mpg, cyl, disp) %>>=%
+  arrange(desc(mpg)) %>>=%
+  head()
+```
+
+This result is still a `Logger` instance, not a value. To extract the value from 
+this we can use `value()`. To extract the log of each step, use `logger_log()` 
+(to avoid conflict with `base::log`)
+
+```{r}
+value(result)
+logger_log(result)
+```
+
+This works with any data value, so we could just as easily use an in-memory 
+SQLite database (or external)
+
+```{r}
+mem <- DBI::dbConnect(RSQLite::SQLite(), ":memory:")
+dplyr::copy_to(mem, mtcars)
+
+res <- loggerM(mem) %>>=%
+  tbl("mtcars") %>>=%
+  filter(mpg > 10) %>>=%
+  select(mpg, cyl, disp) %>>=%
+  arrange(desc(mpg)) %>>=%
+  head()
+```
+
+Again, extracting the components from this
+
+```{r}
+value(res)
+logger_log(res)
+```
+
+Since the log captures what operations were performed, we could re-run this 
+expression, and a helper is available for that
+
+```{r}
+rerun(res)
+```
+
+Some similar functionality is present in the {magrittr} package which provides 
+the 'classic' R pipe `%>%`; a 'functional sequence' starts with a `.` and 
+similarly tracks which functions are to be applied to an arbitrary input once 
+evaluated - in this way, this is similar to defining a new function.
+
+```{r}
+library(magrittr)
+
+# define a functional sequence
+fs <- . %>%
+  tbl("mtcars") %>%
+  select(cyl, mpg)
+
+# evaluate the functional sequence with some input data
+fs(mem)
+
+# identify the function calls at each step of the pipeline
+magrittr::functions(fs)
+```
+
+Since the functional sequence is unevaluated, errors can be present and not 
+triggered
+
+```{r, error = TRUE}
+errfs <- . %>%
+  sqrt() %>%
+  stop("oops") %>%
+  add_n(3)
+
+x <- 1:10
+
+errfs(x)
+magrittr::functions(errfs)
+```
+
+In the monad context, steps which do raise an error nullify the value and a 
+signifier is added to the log to prevent re-running the error
+
+```{r}
+resx <- loggerM(x) %>>=%
+  sqrt() %>>=%
+  add_n(4)
+
+value(resx)
+logger_log(resx)
+
+err <- loggerM(x) %>>=%
+  sqrt() %>>=%
+  stop("oops") %>>=%
+  add_n(3)
+
+value(err)
+logger_log(err)
+```
+
+Aside from an error destroying the value, returning a `NULL` result will also 
+produce this effect
+
+```{r}
+nullify <- loggerM(x) %>>=%
+  sqrt() %>>=%
+  ret_null() %>>=%
+  add_n(7)
+
+value(nullify)
+logger_log(nullify)
+```
+
+One downside to the functional sequence approach is chaining these - since the 
+first term must be `.`, that is always the first entry, and chaining multiple
+sequences is not clean.
+
+```{r}
+a <- . %>% sqrt()
+a
+
+b <- . %>% a %>% add_n(1)
+b
+
+b(x)
+```
+
+Because the monad context is recreated at every step, chaining these is not a 
+problem
+
+```{r}
+a <- loggerM(x) %>>=%
+  sqrt()
+
+value(a)
+logger_log(a)
+
+b <- a %>>=%
+  add_n(1)
+
+value(b)
+logger_log(b)
+```
+
+## Timer
+
+In addition to capturing the expressions in a log, the `Timer` monad also 
+captures the evaluation timing for each step, storing these alongside the 
+expressions themselves in a `data.frame`
+
+```{r}
+x <- timerM(5) %>>=%
+  sleep_for(3) %>>=%
+  timestwo() %>>=%
+  sleep_for(1.3)
+
+value(x)
+times(x)
+
+y <- timerM(5) %>>=%
+  sleep_for(2) %>>=%
+  ret_null() %>>=%
+  sleep_for(0.3)
+
+value(y)
+times(y)
+```
+
+## Maybe
+
+In some languages it is preferrable to return _something_ rather than raising 
+an error, particularly if you want to ensure that errors are handled. The 
+`Maybe` pattern consists of either a `Nothing` (which is empty) or a `Just` 
+containing some value; all functions applied to a `Maybe` will be one of these.
+
+For testing the result, some helpers `is_nothing()` and `is_just()` are defined.
+
+```{r}
+x <- maybeM(9) %>>=% 
+  sqrt() %>>=%
+  timestwo()
+
+value(x)
+is_just(x)
+is_nothing(x)
+
+y <- maybeM(Nothing()) %>>=%
+  sqrt()
+
+value(y)
+is_just(y)
+is_nothing(y)
+
+z <- maybeM(10) %>>=%
+  timestwo() %>>=%
+  add_n(Nothing())
+
+value(z)
+is_just(z)
+is_nothing(z)
+```
+
+For what is likely a much more robust implementation, see 
+[{maybe}](https://armcn.github.io/maybe/).
+
+## Result
+
+Similar to a `Maybe`, a `Result` can contain either a successful `Ok` wrapped 
+value or an `Err` wrapped message, but it will be one of these. This pattern 
+resembles (and internally, uses) the `tryCatch()` approach where the evaluation 
+will not fail, but requires testing what is produced to determine success, for 
+which `is_ok()` and `is_err()` are defined.
+
+```{r}
+x <- resultM(9) %>>=% 
+  sqrt() %>>=%
+  timestwo()
+
+value(x)
+is_err(x)
+is_ok(x)
+```
+
+When the evaluation fails, the error is reported, along with the value _prior_ 
+to the error
+
+```{r}
+y <- resultM(9) %>>=%
+  sqrt() %>>=%
+  ret_err("this threw an error")
+
+value(y)
+is_err(y)
+is_ok(y)
+
+z <- resultM(10) %>>=%
+  timestwo() %>>=%
+  add_n("banana")
+
+value(z)
+is_err(z)
+is_ok(z)
+```
+
+## Extensions
+
+The `flatMap`/"bind" operator defined here as `%>>=%` is applicable to any monad
+which has a `bind()` method defined. The monads defined in this package are all
+`R6Class` objects exposing such a method of the form `m$bind(.call, .quo)` which 
+expects a function and a quosure. You can add your own extensions to these by 
+defining such a class (and probably a constructor helper and a `print()` method)
+
+```{r}
+# a Reporter monad which reports unpiped function calls
+Reporter <- R6::R6Class(
+  c("ReporterMonad"),
+  public = list(
+    value = NULL,
+    initialize = function(value) {
+      if (rlang::is_quosure(value)) {
+        self$value <- rlang::eval_tidy(value)
+      } else {
+        self$value <- value
+      }
+    },
+    bind = function(f, expr) {
+      ## 'undo' the pipe and inject the lhs as an argument
+      result <- unlist(lapply(unlist(self$value), f))
+      args <- as.list(c(self$value, rlang::call_args(expr)))
+      fnew <- rlang::call2(rlang::call_name(expr), !!!args)
+      cat(" ** Calculating:", rlang::quo_text(fnew), "=", result, "\n")
+      Reporter$new(result)
+    }
+  )
+)
+
+reporterM <- function(value) {
+  v <- rlang::enquo(value)
+  Reporter$new(v)
+}
+
+print.Reporter <- function(x, ...) {
+  print(value(x))
+}
+
+x <- reporterM(17) %>>=%
+  timestwo() %>>=%
+  square() %>>=% 
+  add_n(2) %>>=%
+  `/`(8)
+
+value(x)
+```
+
+This is just a toy example; attempting to `cat()` a `data.frame` result would 
+not go well.
