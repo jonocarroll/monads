@@ -142,6 +142,7 @@ pipeline (which would usually use `%>%` or more recently `|>`).
 
 All that is required is to wrap the value at the start of the pipeline in a 
 `Logger` context, which is achieved by calling the `new()` method of `Logger`
+for which there is a constructor helper, `loggerM()`
 
 ```{r}
 library(dplyr, warn.conflicts = FALSE)
