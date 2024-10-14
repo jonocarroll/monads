@@ -56,7 +56,7 @@ This package also defines `Maybe`, `Result`, `Timer`, and `List` monads which
 all work with this new pipe. Additional monads can be added by third-parties to
 further extend the capabilities.
 
-See the vignette for more details.
+See the [vignette](https://jonocarroll.github.io/monads/articles/monads.html) for more details.
 
 ## Prior Art
 
