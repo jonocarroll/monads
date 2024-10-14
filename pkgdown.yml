@@ -3,7 +3,7 @@ pkgdown: 2.1.1
 pkgdown_sha: ~
 articles:
   monads: monads.html
-last_built: 2024-10-14T01:55Z
+last_built: 2024-10-14T02:00Z
 urls:
   reference: https://jonocarroll.github.io/monads/reference
   article: https://jonocarroll.github.io/monads/articles
