@@ -23,3 +23,5 @@ Imports:
     cli,
     R6,
     rlang
+URL: https://github.com/jonocarroll/monads
+BugReports: https://github.com/jonocarroll/monads/issues
