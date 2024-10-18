@@ -16,9 +16,9 @@ knitr::opts_chunk$set(
 )
 ```
 
-'Monad' is a term often best avoided in conversation, and is often described in 
-overly mathematical terms, the "meme" definition being the category theory verion 
-which states
+'Monad' is a term often best avoided in conversation, and is often described in
+overly mathematical terms, the "meme" definition being the category theory
+version which states
 
 > "a monad is just a monoid in the category of endofunctors"
 
