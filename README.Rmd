@@ -20,7 +20,8 @@ knitr::opts_chunk$set(
 
 The goal of monads is to provide a 'toy' implementation of some common monads.
 
-See this blog post for some additional background.
+See [this blog post](https://jcarroll.com.au/2024/10/18/monads-in-r/) for some 
+additional background.
 
 ## Installation
 
